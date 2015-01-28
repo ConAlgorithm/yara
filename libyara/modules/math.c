@@ -25,6 +25,137 @@ limitations under the License.
 #define PI 3.141592653589793
 
 
+define_function(string_jaenisch_fractal)
+{
+  SIZED_STRING* s = sized_string_argument(1);
+  int n = 0;
+  unsigned int min = 255;
+  unsigned int max = 0;
+  unsigned int range = 0;
+  double sum = 0.0;
+  double variance = 0.0;
+  double mean = 0.0;
+  double sigma = 0.0;
+  double mj = 0.0;
+
+  for (int i = 0; i < s->length; i++)
+  {
+    uint8_t c = s->c_string[i];
+
+    // XXX: Skip NULL bytes?
+    n++;
+    sum += c;
+    min = (min < c) ? min : c;
+    max = (max > c) ? max : c;
+    range = max - min;
+    mean = sum / n;
+
+    if (n > 1)
+    {
+      variance += (c - mean) * (c - mean);
+      sigma = sqrt(variance / (n - 1));
+
+      if (range != 0 && sigma != 0)
+      {
+        double x = log(range / (sigma * n)) / log(1.0 / n);
+        mj = (x > 0.5) ? (1.0 / x) : (1.0 / (1.0 - x));
+      }
+    }
+  }
+
+  return_float(mj);
+}
+
+
+define_function(data_jaenisch_fractal)
+{
+  int64_t offset = integer_argument(1);   // offset where to start
+  int64_t length = integer_argument(2);   // length of bytes we want entropy on
+  int n = 0;
+  unsigned int min = 255;
+  unsigned int max = 0;
+  unsigned int range = 0;
+  double sum = 0.0;
+  double variance = 0.0;
+  double mean = 0.0;
+  double sigma = 0.0;
+  double mj = 0.0;
+
+  YR_SCAN_CONTEXT* context = scan_context();
+  YR_MEMORY_BLOCK* block = NULL;
+
+  if (offset < 0 || length < 0 || offset < context->mem_block->base)
+  {
+    return ERROR_WRONG_ARGUMENTS;
+  }
+
+  bool past_first_block = false;
+  uint64_t total_len = 0;
+
+  foreach_memory_block(context, block)
+  {
+    if (offset >= block->base &&
+        offset < block->base + block->size)
+    {
+      uint64_t data_offset = offset - block->base;
+      uint64_t data_len = min(length, block->size - data_offset);
+
+      total_len += data_len;
+      offset += data_len;
+      length -= data_len;
+
+      for (int i = 0; i < data_len; i++)
+      {
+        uint8_t c = *(block->data + data_offset + i);
+
+        // XXX: Skip NULL bytes?
+        n++;
+        sum += c;
+        min = (min < c) ? min : c;
+        max = (max > c) ? max : c;
+        range = max - min;
+        mean = sum / n;
+
+        if (n > 1)
+        {
+          variance += (c - mean) * (c - mean);
+          sigma = sqrt(variance / (n - 1));
+
+          if (range != 0 && sigma != 0)
+          {
+            double x = log(range / (sigma * n)) / log(1.0 / n);
+            mj = (x > 0.5) ? (1.0 / x) : (1.0 / (1.0 - x));
+          }
+        }
+      }
+
+      past_first_block = true;
+    }
+    else if (past_first_block)
+    {
+      // If offset is not within current block and we already
+      // past the first block then the we are trying to compute
+      // the checksum over a range of non contiguos blocks. As
+      // range contains gaps of undefined data the checksum is
+      // undefined.
+
+      return_float(UNDEFINED);
+    }
+
+    if (block->base + block->size > offset + length)
+      break;
+  }
+
+  if (!past_first_block)
+  {
+    return_float(UNDEFINED);
+  }
+
+  printf("mj: %f\n", mj);
+  return_float(mj);
+}
+
+
 define_function(string_entropy)
 {
   SIZED_STRING* s = sized_string_argument(1);
@@ -523,6 +654,8 @@ begin_declarations;
   declare_function("monte_carlo_pi", "s", "f", string_monte_carlo_pi);
   declare_function("entropy", "ii", "f", data_entropy);
   declare_function("entropy", "s", "f", string_entropy);
+  declare_function("jaenisch_fractal", "ii", "f", data_jaenisch_fractal);
+  declare_function("jaenisch_fractal", "s", "f", string_jaenisch_fractal);
 
 end_declarations;
 

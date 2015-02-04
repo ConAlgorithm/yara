@@ -50,7 +50,7 @@ limitations under the License.
 
 
 #define CHECK_TYPE(expression, expected_type, op) \
-    if (expression.type != expected_type) \
+    if (((expression.type) & (expected_type)) == 0) \
     { \
       switch(expression.type) \
       { \
@@ -127,13 +127,15 @@ limitations under the License.
 
 %left _OR_
 %left _AND_
-%left '&' '|' '^'
-%left _LT_ _LE_ _GT_ _GE_ _EQ_ _NEQ_
+%left '|'
+%left '^'
+%left '&'
+%left _EQ_ _NEQ_
+%left _LT_ _LE_ _GT_ _GE_
 %left _SHIFT_LEFT_ _SHIFT_RIGHT_
 %left '+' '-'
 %left '*' '\\' '%'
-%right _NOT_
-%right '~'
+%right _NOT_ '~' UNARY_MINUS
 
 %type <string> strings
 %type <string> string_declaration
@@ -1579,6 +1581,25 @@ primary_expression
 
         ERROR_IF(compiler->last_result != ERROR_SUCCESS);
       }
+    | '-' primary_expression %prec UNARY_MINUS
+      {
+        CHECK_TYPE($2, EXPRESSION_TYPE_INTEGER | EXPRESSION_TYPE_FLOAT, "-");
+
+        if ($2.type == EXPRESSION_TYPE_INTEGER)
+        {
+          $$.type = EXPRESSION_TYPE_INTEGER;
+          $$.value.integer = ($2.value.integer == UNDEFINED) ? 
+              UNDEFINED : -($2.value.integer);
+          compiler->last_result = yr_parser_emit(yyscanner, OP_INT_MINUS, NULL);
+        }
+        else if ($2.type == EXPRESSION_TYPE_FLOAT)
+        {
+          $$.type = EXPRESSION_TYPE_FLOAT;
+          compiler->last_result = yr_parser_emit(yyscanner, OP_DBL_MINUS, NULL);
+        }
+
+        ERROR_IF(compiler->last_result != ERROR_SUCCESS);
+      }
     | primary_expression '+' primary_expression
       {
         compiler->last_result = yr_parser_reduce_operation(
@@ -1699,7 +1720,7 @@ primary_expression
 
         $$.type = EXPRESSION_TYPE_INTEGER;
         $$.value.integer = ($2.value.integer == UNDEFINED) ?
-                              UNDEFINED : $2.value.integer;
+            UNDEFINED : ~($2.value.integer);
       }
     | primary_expression _SHIFT_LEFT_ primary_expression
       {

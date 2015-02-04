@@ -132,6 +132,8 @@ RE_TESTS = [
   ('a[0-9]*b', 'a0123456789b', SUCCEED, 'a0123456789b'),
   ('[0-9a-f]+', '0123456789abcdef', SUCCEED, '0123456789abcdef'),
   ('[0-9a-f]+', 'xyz0123456789xyz', SUCCEED, '0123456789'),
+  ('a[\s\S]b', 'a b', SUCCEED, 'a b'),
+  ('a[\d\D]b', 'a1b', SUCCEED, 'a1b'),
   ('[x-z]+', 'abc', FAIL),
   ('a[-]?c', 'ac', SUCCEED, 'ac'),
   ('a[-b]', 'a-', SUCCEED, 'a-'),
@@ -189,11 +191,32 @@ RE_TESTS = [
   ('\w+', '--ab_cd0123--', SUCCEED, 'ab_cd0123'),
   ('[\w]+', '--ab_cd0123--', SUCCEED, 'ab_cd0123'),
   ('\D+', '1234abc5678', SUCCEED, 'abc'),
+  ('[\d]+', '0123456789', SUCCEED, '0123456789'),
   ('[\D]+', '1234abc5678', SUCCEED, 'abc'),
   ('[\da-fA-F]+', '123abc', SUCCEED, '123abc'),
   ('^(ab|cd)e', 'abcde', FAIL),
   ('(abc|)ef', 'abcdef', SUCCEED, 'ef'),
   ('(abc|)ef', 'abcef', SUCCEED, 'abcef'),
+  (r'\babc', 'abc', SUCCEED, 'abc'),
+  (r'abc\b', 'abc', SUCCEED, 'abc'),
+  (r'\babc', '1abc', FAIL),
+  (r'abc\b', 'abc1', FAIL),
+  (r'abc\s\b', 'abc x', SUCCEED, 'abc '),
+  (r'abc\s\b', 'abc  ', FAIL),
+  (r'\babc\b', ' abc ', SUCCEED, 'abc'),
+  (r'\b\w\w\w\b', ' abc ', SUCCEED, 'abc'),
+  (r'\w\w\w\b', 'abcd', SUCCEED, 'bcd'),
+  (r'\b\w\w\w', 'abcd', SUCCEED, 'abc'),
+  (r'\b\w\w\w\b', 'abcd', FAIL),
+  (r'\Babc', 'abc', FAIL),
+  (r'abc\B', 'abc', FAIL),
+  (r'\Babc', '1abc', SUCCEED, 'abc'),
+  (r'abc\B', 'abc1', SUCCEED, 'abc'),
+  (r'abc\s\B', 'abc x', FAIL),
+  (r'abc\s\B', 'abc  ', SUCCEED, 'abc '),
+  (r'\w\w\w\B', 'abcd', SUCCEED, 'abc'),
+  (r'\B\w\w\w', 'abcd', SUCCEED, 'bcd'),
+  (r'\B\w\w\w\B', 'abcd', FAIL),
 
   # This is allowed in most regexp engines but in order to keep the
   # grammar free of shift/reduce conflicts I've decided not supporting
@@ -329,18 +352,29 @@ class TestYara(unittest.TestCase):
             'rule test { condition: 3.0 \ 2 == 1.5}',
             'rule test { condition: 1 + -1 == 0}',
             'rule test { condition: -1 + -1 == -2}',
-            'rule test { condition: -2 * 2 == -4}',
+            'rule test { condition: 4 --2 * 2 == 8}',
             'rule test { condition: -1.0 * 1 == -1.0}',
+            'rule test { condition: 1-1 == 0}',
+            'rule test { condition: -2.0-3.0 == -5}',
+            'rule test { condition: --1 == 1}',
+            'rule test { condition: 1--1 == 2}',
+            'rule test { condition: -0x01 == -1}',
         ])
 
     def testBitwiseOperators(self):
 
         self.assertTrueRules([
             'rule test { condition: 0x55 | 0xAA == 0xFF }',
-            'rule test { condition: ~0xAA ^ 0x5A & 0xFF == 0x0F }',
+            'rule test { condition: ~0xAA ^ 0x5A & 0xFF == (~0xAA) ^ (0x5A & 0xFF) }',
             'rule test { condition: ~0x55 & 0xFF == 0xAA }',
             'rule test { condition: 8 >> 2 == 2 }',
-            'rule test { condition: 1 << 3 == 8 }'
+            'rule test { condition: 1 << 3 == 8 }',
+            'rule test { condition: 1 | 3 ^ 3 == 1 | (3 ^ 3) }'
+            ])
+            
+        self.assertFalseRules([
+            'rule test { condition: ~0xAA ^ 0x5A & 0xFF == 0x0F }',
+            'rule test { condition: 1 | 3 ^ 3 == (1 | 3) ^ 3}'
         ])
 
     def testStrings(self):
@@ -492,6 +526,7 @@ class TestYara(unittest.TestCase):
 
         self.assertTrueRules([
             'rule test { strings: $a = "ssi" condition: $a at 2 and $a at 5 }',
+            'rule test { strings: $a = "mis" condition: $a at ~0xFF & 0xFF }'
         ], 'mississippi')
 
         self.assertTrueRules([

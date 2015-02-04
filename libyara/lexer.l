@@ -375,7 +375,7 @@ u?int(8|16|32)(be)? {
 }
 
 
--?{digit}+(MB|KB){0,1}  {
+{digit}+(MB|KB){0,1}  {
 
   yylval->integer = strtoll(yytext, NULL, 10);
 
@@ -390,7 +390,7 @@ u?int(8|16|32)(be)? {
   return _NUMBER_;
 }
 
--?{digit}+"."{digit}+  {
+{digit}+"."{digit}+  {
   yylval->double_ = atof(yytext);
   return _DOUBLE_;
 }
@@ -598,6 +598,9 @@ void yywarning(
   YR_COMPILER* compiler = yyget_extra(yyscanner);
   char* file_name;
 
+  if (compiler->callback == NULL)
+    return;
+
   if (compiler->file_name_stack_ptr > 0)
     file_name = compiler->file_name_stack[compiler->file_name_stack_ptr - 1];
   else
@@ -607,7 +610,8 @@ void yywarning(
       YARA_ERROR_LEVEL_WARNING,
       file_name,
       yyget_lineno(yyscanner),
-      warning_message);
+      warning_message,
+      compiler->user_data);
 }
 
 
@@ -665,7 +669,8 @@ void yyerror(
           YARA_ERROR_LEVEL_ERROR,
           file_name,
           compiler->last_error_line,
-          error_message);
+          error_message,
+          compiler->user_data);
     }
   }
   else
@@ -680,7 +685,8 @@ void yyerror(
         YARA_ERROR_LEVEL_ERROR,
         file_name,
         compiler->last_error_line,
-        message);
+        message,
+        compiler->user_data);
     }
   }
 

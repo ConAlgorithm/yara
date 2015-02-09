@@ -164,6 +164,111 @@ define_function(data_jaenisch_fractal)
 }
 
 
+define_function(string_handley_fractal)
+{
+  SIZED_STRING* s = sized_string_argument(1);
+  int n = 0;
+  double h = 0.0;
+  double mh = 0.0;
+  uint8_t last_byte;
+
+  for (int i = 0; i < s->length; i++)
+  {
+    uint8_t c = s->c_string[i];
+
+    // XXX: Skip NULL bytes?
+    n++;
+
+    if (n > 1)
+    {
+      h = h + sqrt(1 + pow(c * (n - 1) - last_byte * (n - 1), 2));
+      if (h > 1)
+        mh = 1 + log(h / (n - 1)) / log(h);
+    }
+    last_byte = c;
+  }
+
+  return_float(mh);
+}
+
+
+define_function(data_handley_fractal)
+{
+  int64_t offset = integer_argument(1);   // offset where to start
+  int64_t length = integer_argument(2);   // length of bytes we want entropy on
+  int n = 0;
+  double h = 0.0;
+  double mh = 0.0;
+  uint8_t last_byte;
+
+  YR_SCAN_CONTEXT* context = scan_context();
+  YR_MEMORY_BLOCK* block = NULL;
+
+  if (offset < 0 || length < 0 || offset < context->mem_block->base)
+  {
+    return ERROR_WRONG_ARGUMENTS;
+  }
+
+  bool past_first_block = false;
+  uint64_t total_len = 0;
+
+  foreach_memory_block(context, block)
+  {
+    if (offset >= block->base &&
+        offset < block->base + block->size)
+    {
+      uint64_t data_offset = offset - block->base;
+      uint64_t data_len = min(length, block->size - data_offset);
+
+      total_len += data_len;
+      offset += data_len;
+      length -= data_len;
+
+      last_byte = *(block->data + data_offset);
+
+      for (int i = 0; i < data_len; i++)
+      {
+        uint8_t c = *(block->data + data_offset + i);
+
+        // XXX: Skip NULL bytes?
+        n++;
+
+        if (n > 1)
+        {
+          h = h + sqrt(1 + pow(c * (n - 1) - last_byte * (n - 1), 2));
+          if (h > 1)
+            mh = 1 + log(h / (n - 1)) / log(h);
+        }
+        last_byte = c;
+      }
+
+      past_first_block = true;
+    }
+    else if (past_first_block)
+    {
+      // If offset is not within current block and we already
+      // past the first block then the we are trying to compute
+      // the checksum over a range of non contiguos blocks. As
+      // range contains gaps of undefined data the checksum is
+      // undefined.
+
+      return_float(UNDEFINED);
+    }
+
+    if (block->base + block->size > offset + length)
+      break;
+  }
+
+  if (!past_first_block)
+  {
+    return_float(UNDEFINED);
+  }
+
+  printf("mh: %f\n", mh);
+  return_float(mh);
+}
+
+
 define_function(string_entropy)
 {
   SIZED_STRING* s = sized_string_argument(1);
@@ -664,6 +769,8 @@ begin_declarations;
   declare_function("entropy", "s", "f", string_entropy);
   declare_function("jaenisch_fractal", "ii", "f", data_jaenisch_fractal);
   declare_function("jaenisch_fractal", "s", "f", string_jaenisch_fractal);
+  declare_function("handley_fractal", "ii", "f", data_handley_fractal);
+  declare_function("handley_fractal", "s", "f", string_handley_fractal);
 
 end_declarations;
 

@@ -17,6 +17,13 @@ limitations under the License.
 #ifndef YR_OBJECT_H
 #define YR_OBJECT_H
 
+#ifdef _MSC_VER
+#include <float.h>
+#define isnan _isnan
+#define INFINITY (DBL_MAX + DBL_MAX)
+#define NAN (INFINITY-INFINITY)
+#endif
+
 #include <yara/types.h>
 
 
@@ -86,21 +93,21 @@ SIZED_STRING* yr_object_get_string(
     ...);
 
 
-void yr_object_set_integer(
+int yr_object_set_integer(
     int64_t value,
     YR_OBJECT* object,
     const char* field,
     ...);
 
 
-void yr_object_set_float(
+int yr_object_set_float(
     double value,
     YR_OBJECT* object,
     const char* field,
     ...);
 
 
-void yr_object_set_string(
+int yr_object_set_string(
     const char* value,
     size_t len,
     YR_OBJECT* object,

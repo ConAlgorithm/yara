@@ -18,6 +18,17 @@ limitations under the License.
 
 #ifdef _WIN32
 #include <windows.h>
+
+// These definitions are not present in older Windows headers.
+
+#ifndef IMAGE_FILE_MACHINE_ARMNT
+#define IMAGE_FILE_MACHINE_ARMNT             0x01c4
+#endif
+
+#ifndef IMAGE_FILE_MACHINE_ARM64
+#define IMAGE_FILE_MACHINE_ARM64             0xaa64
+#endif
+
 #else
 
 #include <stdint.h>
@@ -136,6 +147,21 @@ typedef struct _IMAGE_FILE_HEADER {
 #define IMAGE_FILE_MACHINE_SH5               0x01a8
 #define IMAGE_FILE_MACHINE_THUMB             0x01c2
 #define IMAGE_FILE_MACHINE_WCEMIPSV2         0x0169
+
+// Section characteristics
+#define IMAGE_SCN_CNT_CODE                   0x00000020
+#define IMAGE_SCN_CNT_INITIALIZED_DATA       0x00000040
+#define IMAGE_SCN_CNT_UNINITIALIZED_DATA     0x00000080
+#define IMAGE_SCN_GPREL                      0x00008000
+#define IMAGE_SCN_MEM_16BIT                  0x00020000
+#define IMAGE_SCN_LNK_NRELOC_OVFL            0x01000000
+#define IMAGE_SCN_MEM_DISCARDABLE            0x02000000
+#define IMAGE_SCN_MEM_NOT_CACHED             0x04000000
+#define IMAGE_SCN_MEM_NOT_PAGED              0x08000000
+#define IMAGE_SCN_MEM_SHARED                 0x10000000
+#define IMAGE_SCN_MEM_EXECUTE                0x20000000
+#define IMAGE_SCN_MEM_READ                   0x40000000
+#define IMAGE_SCN_MEM_WRITE                  0x80000000
 
 //
 // Directory format.

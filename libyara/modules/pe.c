@@ -40,19 +40,28 @@ limitations under the License.
 
 #define MODULE_NAME pe
 
-#define RESOURCE_TYPE_CURSOR         1
-#define RESOURCE_TYPE_BITMAP         2
-#define RESOURCE_TYPE_ICON           3
-#define RESOURCE_TYPE_MENU           4
-#define RESOURCE_TYPE_DIALOG         5
-#define RESOURCE_TYPE_STRING         6
-#define RESOURCE_TYPE_FONTDIR        7
-#define RESOURCE_TYPE_FONT           8
-#define RESOURCE_TYPE_ACCELERATOR    9
-#define RESOURCE_TYPE_RCDATA         10
-#define RESOURCE_TYPE_MESSAGETABLE   11
-#define RESOURCE_TYPE_VERSION        16
-#define RESOURCE_TYPE_MANIFEST       24
+// http://msdn.microsoft.com/en-us/library/ms648009(v=vs.85).aspx
+#define RESOURCE_TYPE_CURSOR       1
+#define RESOURCE_TYPE_BITMAP       2
+#define RESOURCE_TYPE_ICON         3
+#define RESOURCE_TYPE_MENU         4
+#define RESOURCE_TYPE_DIALOG       5
+#define RESOURCE_TYPE_STRING       6
+#define RESOURCE_TYPE_FONTDIR      7
+#define RESOURCE_TYPE_FONT         8
+#define RESOURCE_TYPE_ACCELERATOR  9
+#define RESOURCE_TYPE_RCDATA       10
+#define RESOURCE_TYPE_MESSAGETABLE 11
+#define RESOURCE_TYPE_GROUP_CURSOR 12 // MAKEINTRESOURCE((ULONG_PTR)(RT_CURSOR) + 11)
+#define RESOURCE_TYPE_GROUP_ICON   14 // MAKEINTRESOURCE((ULONG_PTR)(RT_ICON) + 11)
+#define RESOURCE_TYPE_VERSION      16
+#define RESOURCE_TYPE_DLGINCLUDE   17
+#define RESOURCE_TYPE_PLUGPLAY     19
+#define RESOURCE_TYPE_VXD          20
+#define RESOURCE_TYPE_ANICURSOR    21
+#define RESOURCE_TYPE_ANIICON      22
+#define RESOURCE_TYPE_HTML         23
+#define RESOURCE_TYPE_MANIFEST     24
 
 
 #define RESOURCE_CALLBACK_CONTINUE   0
@@ -74,6 +83,10 @@ limitations under the License.
     ((entry)->OffsetToData & 0x7FFFFFFF)
 
 
+#define IS_64BITS_PE(pe) \
+    (pe->header64->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+
+
 #define available_space(pe, pointer) \
     (pe->data + pe->data_size - (uint8_t*)(pointer))
 
@@ -91,6 +104,9 @@ typedef int (*RESOURCE_CALLBACK_FUNC) ( \
      int rsrc_type, \
      int rsrc_id, \
      int rsrc_language, \
+     uint8_t* type_string, \
+     uint8_t* name_string, \
+     uint8_t* lang_string, \
      void* cb_data);
 
 
@@ -123,7 +139,11 @@ typedef struct _PE
   uint8_t* data;
   size_t data_size;
 
-  PIMAGE_NT_HEADERS32 header;
+  union {
+    PIMAGE_NT_HEADERS32 header;
+    PIMAGE_NT_HEADERS64 header64;
+  };
+
   YR_OBJECT* object;
   IMPORTED_DLL* imported_dlls;
   uint32_t resources;
@@ -314,13 +334,8 @@ PIMAGE_DATA_DIRECTORY pe_get_directory_entry(
 {
   PIMAGE_DATA_DIRECTORY result;
 
-  // The first WORD in the OptionalHeader (32 or 64 bit) is a Magic value
-  // which determines the appropriate structure to use (PIMAGE_NT_HEADERS64
-  // or PIMAGE_NT_HEADERS32). As such, just cast pe->header to
-  // PIMAGE_NT_HEADERS64 and check the magic value, then cast accordingly.
-  if (((PIMAGE_NT_HEADERS64) pe->header)->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
-    result = &((PIMAGE_NT_HEADERS64) pe->header)->
-        OptionalHeader.DataDirectory[entry];
+  if (IS_64BITS_PE(pe))
+    result = &pe->header64->OptionalHeader.DataDirectory[entry];
   else
     result = &pe->header->OptionalHeader.DataDirectory[entry];
 
@@ -367,6 +382,42 @@ uint64_t pe_rva_to_offset(
 }
 
 
+// Return a pointer to the resource directory string or NULL.
+// The callback function will parse this and call set_sized_string().
+// The pointer is guranteed to have enough space to contain the entire string.
+
+uint8_t* parse_resource_name(
+    PE* pe,
+    uint8_t* rsrc_data,
+    PIMAGE_RESOURCE_DIRECTORY_ENTRY entry)
+{
+
+  // If high bit is set it is an offset relative to rsrc_data, which contains
+  // a resource directory string.
+
+  if (entry->Name & 0x80000000)
+  {
+    uint8_t* rsrc_str_ptr = rsrc_data + (entry->Name & 0x7FFFFFFF);
+
+    // A resource directory string is 2 bytes for a string and then a variable
+    // length Unicode string. Make sure we at least have two bytes.
+
+    if (!fits_in_pe(pe, rsrc_str_ptr, 2))
+      return NULL;
+
+    DWORD length = *rsrc_str_ptr;
+
+    // Move past the length and make sure we have enough bytes for the string.
+    if (!fits_in_pe(pe, rsrc_str_ptr + 2, length))
+      return NULL;
+
+    return rsrc_str_ptr;
+  }
+
+  return NULL;
+}
+
+
 int _pe_iterate_resources(
     PE* pe,
     PIMAGE_RESOURCE_DIRECTORY resource_dir,
@@ -375,6 +426,9 @@ int _pe_iterate_resources(
     int* type,
     int* id,
     int* language,
+    uint8_t* type_string,
+    uint8_t* name_string,
+    uint8_t* lang_string,
     RESOURCE_CALLBACK_FUNC callback,
     void* callback_data)
 {
@@ -409,12 +463,15 @@ int _pe_iterate_resources(
     {
       case 0:
         *type = entry->Name;
+        type_string = parse_resource_name(pe, rsrc_data, entry);
         break;
       case 1:
         *id = entry->Name;
+        name_string = parse_resource_name(pe, rsrc_data, entry);
         break;
       case 2:
         *language = entry->Name;
+        lang_string = parse_resource_name(pe, rsrc_data, entry);
         break;
     }
 
@@ -433,6 +490,9 @@ int _pe_iterate_resources(
             type,
             id,
             language,
+            type_string,
+            name_string,
+            lang_string,
             callback,
             callback_data);
 
@@ -452,6 +512,9 @@ int _pe_iterate_resources(
             *type,
             *id,
             *language,
+            type_string,
+            name_string,
+            lang_string,
             callback_data);
       }
 
@@ -479,6 +542,9 @@ int pe_iterate_resources(
   int type = -1;
   int id = -1;
   int language = -1;
+  uint8_t* type_string = NULL;
+  uint8_t* name_string = NULL;
+  uint8_t* lang_string = NULL;
 
   PIMAGE_DATA_DIRECTORY directory = pe_get_directory_entry(
       pe, IMAGE_DIRECTORY_ENTRY_RESOURCE);
@@ -495,16 +561,13 @@ int pe_iterate_resources(
 
       set_integer(rsrc_dir->TimeDateStamp,
                   pe->object,
-                  "resource_timestamp",
-                  pe->resources);
+                  "resource_timestamp");
       set_integer(rsrc_dir->MajorVersion,
                   pe->object,
-                  "resource_major_version",
-                  pe->resources);
+                  "resource_version.major");
       set_integer(rsrc_dir->MinorVersion,
                   pe->object,
-                  "resource_minor_version",
-                  pe->resources);
+                  "resource_version.minor");
       _pe_iterate_resources(
           pe,
           rsrc_dir,
@@ -513,6 +576,9 @@ int pe_iterate_resources(
           &type,
           &id,
           &language,
+          type_string,
+          name_string,
+          lang_string,
           callback,
           callback_data);
 
@@ -522,6 +588,7 @@ int pe_iterate_resources(
 
   return 0;
 }
+
 
 #ifdef __cplusplus
 #define typeof decltype
@@ -620,8 +687,12 @@ int pe_collect_resources(
     int rsrc_type,
     int rsrc_id,
     int rsrc_language,
+    uint8_t* type_string,
+    uint8_t* name_string,
+    uint8_t* lang_string,
     PE* pe)
 {
+  DWORD length;
   size_t offset = pe_rva_to_offset(pe, rsrc_data->OffsetToData);
 
   if (offset == 0 || !fits_in_pe(pe, offset, rsrc_data->Size))
@@ -634,28 +705,64 @@ int pe_collect_resources(
         pe->resources);
 
   set_integer(
-        rsrc_type,
-        pe->object,
-        "resources[%i].type",
-        pe->resources);
-
-  set_integer(
-        rsrc_id,
-        pe->object,
-        "resources[%i].id",
-        pe->resources);
-
-  set_integer(
-        rsrc_language,
-        pe->object,
-        "resources[%i].language",
-        pe->resources);
-
-  set_integer(
         rsrc_data->Size,
         pe->object,
         "resources[%i].length",
         pe->resources);
+
+  if (type_string)
+  {
+    // Multiply by 2 because it is a Unicode string.
+    length = ((DWORD) *type_string) * 2;
+    type_string += 2;
+    set_sized_string(
+        (char*) type_string, length, pe->object,
+        "resources[%i].type_string", pe->resources);
+  }
+  else
+  {
+    set_integer(
+          rsrc_type,
+          pe->object,
+          "resources[%i].type",
+          pe->resources);
+  }
+
+  if (name_string)
+  {
+    // Multiply by 2 because it is a Unicode string.
+    length = ((DWORD) *name_string) * 2;
+    name_string += 2;
+    set_sized_string(
+        (char*) name_string, length, pe->object,
+        "resources[%i].name_string", pe->resources);
+  }
+  else
+  {
+    set_integer(
+          rsrc_id,
+          pe->object,
+          "resources[%i].id",
+          pe->resources);
+  }
+
+  if (lang_string)
+  {
+    // Multiply by 2 because it is a Unicode string.
+    length = ((DWORD) *lang_string) * 2;
+    lang_string += 2;
+    set_sized_string(
+        (char*) lang_string, length, pe->object,
+        "resources[%i].language_string", pe->resources);
+  }
+  else
+  {
+    set_integer(
+          rsrc_language,
+          pe->object,
+          "resources[%i].language",
+          pe->resources);
+  }
 
   // Resources we do extra parsing on
   if (rsrc_type == RESOURCE_TYPE_VERSION)
@@ -679,13 +786,14 @@ IMPORTED_FUNCTION* pe_parse_import_descriptor(
 
   // I've seen binaries where OriginalFirstThunk is zero. In this case
   // use FirstThunk.
+
   if (offset == 0)
     offset = pe_rva_to_offset(pe, import_descriptor->FirstThunk);
 
   if (offset == 0)
     return NULL;
 
-  if (((PIMAGE_NT_HEADERS64) pe->header)->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+  if (IS_64BITS_PE(pe))
   {
     PIMAGE_THUNK_DATA64 thunks64 = (PIMAGE_THUNK_DATA64)(pe->data + offset);
 
@@ -821,6 +929,7 @@ int pe_valid_dll_name(
   return (l > 0 && l < n);
 }
 
+
 //
 // Walk the imports and collect relevant information. It is used in the
 // "imports" function for comparison and in the "imphash" function for
@@ -889,6 +998,7 @@ IMPORTED_DLL* pe_parse_imports(
 
   return head;
 }
+
 
 #if defined(HAVE_LIBCRYPTO)
 
@@ -1053,9 +1163,9 @@ void pe_parse_header(
   char section_name[IMAGE_SIZEOF_SHORT_NAME + 1];
 
 #define OptionalHeader(field) \
-  (((PIMAGE_NT_HEADERS64) pe->header)->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC ? \
-   ((PIMAGE_NT_HEADERS64) pe->header)->OptionalHeader.field : \
-     pe->header->OptionalHeader.field)
+    (IS_64BITS_PE(pe) ? \
+        pe->header64->OptionalHeader.field : \
+        pe->header->OptionalHeader.field)
 
   set_integer(
       pe->header->FileHeader.Machine,
@@ -1184,7 +1294,41 @@ define_function(valid_on)
 }
 
 
-define_function(section_index)
+define_function(section_index_addr)
+{
+  YR_OBJECT* module = module();
+  YR_SCAN_CONTEXT* context = scan_context();
+  int64_t offset;
+  int64_t size;
+
+  if (is_undefined(module, "number_of_sections"))
+    return_integer(UNDEFINED);
+
+  int64_t addr = integer_argument(1);
+  int64_t n = get_integer(module, "number_of_sections");
+
+  for (int64_t i = 0; i < n; i++)
+  {
+    if (context->flags & SCAN_FLAGS_PROCESS_MEMORY)
+    {
+      offset = get_integer(module, "sections[%i].virtual_address", i);
+      size = get_integer(module, "sections[%i].virtual_size", i);
+    }
+    else
+    {
+      offset = get_integer(module, "sections[%i].raw_data_offset", i);
+      size = get_integer(module, "sections[%i].raw_data_size", i);
+    }
+
+    if (addr >= offset && addr < offset + size)
+      return_integer(i);
+  }
+
+  return_integer(UNDEFINED);
+}
+
+
+define_function(section_index_name)
 {
   YR_OBJECT* module = module();
 
@@ -1314,6 +1458,9 @@ define_function(imphash)
     // Allocate a new string to hold the dll name.
 
     char* dll_name = (char *) yr_malloc(dll_name_len + 1);
+    if (! dll_name)
+      return ERROR_INSUFICIENT_MEMORY;
+
     strlcpy(dll_name, dll->name, dll_name_len + 1);
 
     func = dll->functions;
@@ -1328,7 +1475,10 @@ define_function(imphash)
       char* final_name = (char*) yr_malloc(final_name_len + 1);
 
       if (final_name == NULL)
-        break;
+        {
+          yr_free(dll_name);
+          break;
+        }
 
       sprintf(final_name, first ? "%s.%s": ",%s.%s", dll_name, func->name);
 
@@ -1346,6 +1496,7 @@ define_function(imphash)
     }
 
     yr_free(dll_name);
+
     dll = dll->next;
   }
 
@@ -1511,6 +1662,42 @@ begin_declarations;
   declare_integer("UP_SYSTEM_ONLY");
   declare_integer("BYTES_REVERSED_HI");
 
+  declare_integer("SECTION_CNT_CODE");
+  declare_integer("SECTION_CNT_INITIALIZED_DATA");
+  declare_integer("SECTION_CNT_UNINITIALIZED_DATA");
+  declare_integer("SECTION_GPREL");
+  declare_integer("SECTION_MEM_16BIT");
+  declare_integer("SECTION_LNK_NRELOC_OVFL");
+  declare_integer("SECTION_MEM_DISCARDABLE");
+  declare_integer("SECTION_MEM_NOT_CACHED");
+  declare_integer("SECTION_MEM_NOT_PAGED");
+  declare_integer("SECTION_MEM_SHARED");
+  declare_integer("SECTION_MEM_EXECUTE");
+  declare_integer("SECTION_MEM_READ");
+  declare_integer("SECTION_MEM_WRITE");
+
+  declare_integer("RESOURCE_TYPE_CURSOR");
+  declare_integer("RESOURCE_TYPE_BITMAP");
+  declare_integer("RESOURCE_TYPE_ICON");
+  declare_integer("RESOURCE_TYPE_MENU");
+  declare_integer("RESOURCE_TYPE_DIALOG");
+  declare_integer("RESOURCE_TYPE_STRING");
+  declare_integer("RESOURCE_TYPE_FONTDIR");
+  declare_integer("RESOURCE_TYPE_FONT");
+  declare_integer("RESOURCE_TYPE_ACCELERATOR");
+  declare_integer("RESOURCE_TYPE_RCDATA");
+  declare_integer("RESOURCE_TYPE_MESSAGETABLE");
+  declare_integer("RESOURCE_TYPE_GROUP_CURSOR");
+  declare_integer("RESOURCE_TYPE_GROUP_ICON");
+  declare_integer("RESOURCE_TYPE_VERSION");
+  declare_integer("RESOURCE_TYPE_DLGINCLUDE");
+  declare_integer("RESOURCE_TYPE_PLUGPLAY");
+  declare_integer("RESOURCE_TYPE_VXD");
+  declare_integer("RESOURCE_TYPE_ANICURSOR");
+  declare_integer("RESOURCE_TYPE_ANIICON");
+  declare_integer("RESOURCE_TYPE_HTML");
+  declare_integer("RESOURCE_TYPE_MANIFEST");
+
   declare_integer("machine");
   declare_integer("number_of_sections");
   declare_integer("timestamp");
@@ -1564,21 +1751,27 @@ begin_declarations;
   declare_function("imphash", "", "s", imphash);
   #endif
 
-  declare_function("section_index", "s", "i", section_index);
+  declare_function("section_index", "s", "i", section_index_name);
+  declare_function("section_index", "i", "i", section_index_addr);
   declare_function("exports", "s", "i", exports);
   declare_function("imports", "ss", "i", imports);
   declare_function("locale", "i", "i", locale);
   declare_function("language", "i", "i", language);
 
   declare_integer("resource_timestamp")
-  declare_integer("resource_major_version")
-  declare_integer("resource_minor_version")
+  begin_struct("resource_version");
+    declare_integer("major");
+    declare_integer("minor");
+  end_struct("resource_version");
   begin_struct_array("resources");
-    declare_integer("offset")
-    declare_integer("type")
-    declare_integer("id")
-    declare_integer("language")
-    declare_integer("length")
+    declare_integer("offset");
+    declare_integer("length");
+    declare_integer("type");
+    declare_integer("id");
+    declare_integer("language");
+    declare_string("type_string");
+    declare_string("name_string");
+    declare_string("language_string");
   end_struct_array("resources");
   declare_integer("number_of_resources");
 
@@ -1753,6 +1946,110 @@ int module_load(
   set_integer(
       IMAGE_FILE_BYTES_REVERSED_HI, module_object,
       "BYTES_REVERSED_HI");
+
+  set_integer(
+      IMAGE_SCN_CNT_CODE, module_object,
+      "SECTION_CNT_CODE");
+  set_integer(
+      IMAGE_SCN_CNT_INITIALIZED_DATA, module_object,
+      "SECTION_CNT_INITIALIZED_DATA");
+  set_integer(
+      IMAGE_SCN_CNT_UNINITIALIZED_DATA, module_object,
+      "SECTION_CNT_UNINITIALIZED_DATA");
+  set_integer(
+      IMAGE_SCN_GPREL, module_object,
+      "SECTION_GPREL");
+  set_integer(
+      IMAGE_SCN_MEM_16BIT, module_object,
+      "SECTION_MEM_16BIT");
+  set_integer(
+      IMAGE_SCN_LNK_NRELOC_OVFL, module_object,
+      "SECTION_LNK_NRELOC_OVFL");
+  set_integer(
+      IMAGE_SCN_MEM_DISCARDABLE, module_object,
+      "SECTION_MEM_DISCARDABLE");
+  set_integer(
+      IMAGE_SCN_MEM_NOT_CACHED, module_object,
+      "SECTION_MEM_NOT_CACHED");
+  set_integer(
+      IMAGE_SCN_MEM_NOT_PAGED, module_object,
+      "SECTION_MEM_NOT_PAGED");
+  set_integer(
+      IMAGE_SCN_MEM_SHARED, module_object,
+      "SECTION_MEM_SHARED");
+  set_integer(
+      IMAGE_SCN_MEM_EXECUTE, module_object,
+      "SECTION_MEM_EXECUTE");
+  set_integer(
+      IMAGE_SCN_MEM_READ, module_object,
+      "SECTION_MEM_READ");
+  set_integer(
+      IMAGE_SCN_MEM_WRITE, module_object,
+      "SECTION_MEM_WRITE");
+
+  set_integer(
+      RESOURCE_TYPE_CURSOR, module_object,
+      "RESOURCE_TYPE_CURSOR");
+  set_integer(
+      RESOURCE_TYPE_BITMAP, module_object,
+      "RESOURCE_TYPE_BITMAP");
+  set_integer(
+      RESOURCE_TYPE_ICON, module_object,
+      "RESOURCE_TYPE_ICON");
+  set_integer(
+      RESOURCE_TYPE_MENU, module_object,
+      "RESOURCE_TYPE_MENU");
+  set_integer(
+      RESOURCE_TYPE_DIALOG, module_object,
+      "RESOURCE_TYPE_DIALOG");
+  set_integer(
+      RESOURCE_TYPE_STRING, module_object,
+      "RESOURCE_TYPE_STRING");
+  set_integer(
+      RESOURCE_TYPE_FONTDIR, module_object,
+      "RESOURCE_TYPE_FONTDIR");
+  set_integer(
+      RESOURCE_TYPE_FONT, module_object,
+      "RESOURCE_TYPE_FONT");
+  set_integer(
+      RESOURCE_TYPE_ACCELERATOR, module_object,
+      "RESOURCE_TYPE_ACCELERATOR");
+  set_integer(
+      RESOURCE_TYPE_RCDATA, module_object,
+      "RESOURCE_TYPE_RCDATA");
+  set_integer(
+      RESOURCE_TYPE_MESSAGETABLE, module_object,
+      "RESOURCE_TYPE_MESSAGETABLE");
+  set_integer(
+      RESOURCE_TYPE_GROUP_CURSOR, module_object,
+      "RESOURCE_TYPE_GROUP_CURSOR");
+  set_integer(
+      RESOURCE_TYPE_GROUP_ICON, module_object,
+      "RESOURCE_TYPE_GROUP_ICON");
+  set_integer(
+      RESOURCE_TYPE_VERSION, module_object,
+      "RESOURCE_TYPE_VERSION");
+  set_integer(
+      RESOURCE_TYPE_DLGINCLUDE, module_object,
+      "RESOURCE_TYPE_DLGINCLUDE");
+  set_integer(
+      RESOURCE_TYPE_PLUGPLAY, module_object,
+      "RESOURCE_TYPE_PLUGPLAY");
+  set_integer(
+      RESOURCE_TYPE_VXD, module_object,
+      "RESOURCE_TYPE_VXD");
+  set_integer(
+      RESOURCE_TYPE_ANICURSOR, module_object,
+      "RESOURCE_TYPE_ANICURSOR");
+  set_integer(
+      RESOURCE_TYPE_ANIICON, module_object,
+      "RESOURCE_TYPE_ANIICON");
+  set_integer(
+      RESOURCE_TYPE_HTML, module_object,
+      "RESOURCE_TYPE_HTML");
+  set_integer(
+      RESOURCE_TYPE_MANIFEST, module_object,
+      "RESOURCE_TYPE_MANIFEST");
 
   YR_MEMORY_BLOCK* block;
 

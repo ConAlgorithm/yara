@@ -190,16 +190,19 @@ int yr_atoms_min_quality(
 ATOM_TREE_NODE* _yr_atoms_tree_node_create(
     uint8_t type)
 {
-  ATOM_TREE_NODE* new_node;
+  ATOM_TREE_NODE* new_node = (ATOM_TREE_NODE*) \
+      yr_malloc(sizeof(ATOM_TREE_NODE));
 
-  new_node = (ATOM_TREE_NODE*) yr_malloc(sizeof(ATOM_TREE_NODE));
-  new_node->type = type;
-  new_node->atom_length = 0;
-  new_node->next_sibling = NULL;
-  new_node->children_head = NULL;
-  new_node->children_tail = NULL;
-  new_node->forward_code = NULL;
-  new_node->backward_code = NULL;
+  if (new_node != NULL)
+  {
+    new_node->type = type;
+    new_node->atom_length = 0;
+    new_node->next_sibling = NULL;
+    new_node->children_head = NULL;
+    new_node->children_tail = NULL;
+    new_node->forward_code = NULL;
+    new_node->backward_code = NULL;
+  }
 
   return new_node;
 }
@@ -327,7 +330,8 @@ YR_ATOM_LIST_ITEM* _yr_atoms_list_concat(
 
 int _yr_atoms_choose(
     ATOM_TREE_NODE* node,
-    YR_ATOM_LIST_ITEM** choosen_atoms)
+    YR_ATOM_LIST_ITEM** choosen_atoms,
+    int* atoms_quality)
 {
   ATOM_TREE_NODE* child;
   YR_ATOM_LIST_ITEM* item;
@@ -339,14 +343,14 @@ int _yr_atoms_choose(
 
   *choosen_atoms = NULL;
 
-  if (node == NULL)
-    return 0;
-
   switch (node->type)
   {
   case ATOM_TREE_LEAF:
 
     item = (YR_ATOM_LIST_ITEM*) yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
+
+    if (item == NULL)
+      return ERROR_INSUFICIENT_MEMORY;
 
     for (i = 0; i < node->atom_length; i++)
       item->atom[i] = node->atom[i];
@@ -358,8 +362,8 @@ int _yr_atoms_choose(
     item->next = NULL;
 
     *choosen_atoms = item;
-
-    return _yr_atoms_quality(node->atom, node->atom_length);
+    *atoms_quality = _yr_atoms_quality(node->atom, node->atom_length);
+    break;
 
   case ATOM_TREE_OR:
 
@@ -367,7 +371,7 @@ int _yr_atoms_choose(
 
     while (child != NULL)
     {
-      quality = _yr_atoms_choose(child, &item);
+      FAIL_ON_ERROR(_yr_atoms_choose(child, &item, &quality));
 
       if (quality > max_quality)
       {
@@ -383,7 +387,8 @@ int _yr_atoms_choose(
       child = child->next_sibling;
     }
 
-    return max_quality;
+    *atoms_quality = max_quality;
+    break;
 
   case ATOM_TREE_AND:
 
@@ -391,7 +396,7 @@ int _yr_atoms_choose(
 
     while (child != NULL)
     {
-      quality = _yr_atoms_choose(child, &item);
+      FAIL_ON_ERROR(_yr_atoms_choose(child, &item, &quality));
 
       if (quality < min_quality)
         min_quality = quality;
@@ -406,10 +411,11 @@ int _yr_atoms_choose(
       child = child->next_sibling;
     }
 
-    return min_quality;
+    *atoms_quality = min_quality;
+    break;
   }
 
-  return 0;
+  return ERROR_SUCCESS;
 }
 
 
@@ -631,6 +637,10 @@ ATOM_TREE_NODE* _yr_atoms_extract_from_re_node(
       if (atom_tree->current_leaf == NULL)
       {
         atom_tree->current_leaf = _yr_atoms_tree_node_create(ATOM_TREE_LEAF);
+
+        if (atom_tree->current_leaf == NULL)
+          return NULL;
+
         atom_tree->current_leaf->forward_code = re_node->forward_code;
         atom_tree->current_leaf->backward_code = re_node->backward_code;
       }
@@ -680,6 +690,10 @@ ATOM_TREE_NODE* _yr_atoms_extract_from_re_node(
 
       current_node = _yr_atoms_extract_from_re_node(
           re_node->left, atom_tree, current_node);
+
+      if (current_node == NULL)
+        return NULL;
+
       current_node = _yr_atoms_extract_from_re_node(
           re_node->right, atom_tree, current_node);
 
@@ -690,8 +704,15 @@ ATOM_TREE_NODE* _yr_atoms_extract_from_re_node(
       append_current_leaf_to_node(current_node);
 
       left_node = _yr_atoms_tree_node_create(ATOM_TREE_OR);
+
+      if (left_node == NULL)
+        return NULL;
+
       left_node = _yr_atoms_extract_from_re_node(
           re_node->left, atom_tree, left_node);
+
+      if (left_node == NULL)
+        return NULL;
 
       append_current_leaf_to_node(left_node);
 
@@ -709,8 +730,15 @@ ATOM_TREE_NODE* _yr_atoms_extract_from_re_node(
       }
 
       right_node = _yr_atoms_tree_node_create(ATOM_TREE_OR);
+
+      if (right_node == NULL)
+        return NULL;
+
       right_node = _yr_atoms_extract_from_re_node(
           re_node->right, atom_tree, right_node);
+
+      if (right_node == NULL)
+        return NULL;
 
       append_current_leaf_to_node(right_node);
 
@@ -729,6 +757,10 @@ ATOM_TREE_NODE* _yr_atoms_extract_from_re_node(
       }
 
       and_node = _yr_atoms_tree_node_create(ATOM_TREE_AND);
+
+      if (and_node == NULL)
+        return NULL;
+
       and_node->children_head = left_node;
       and_node->children_tail = right_node;
       left_node->next_sibling = right_node;
@@ -745,6 +777,9 @@ ATOM_TREE_NODE* _yr_atoms_extract_from_re_node(
       {
         current_node = _yr_atoms_extract_from_re_node(
             re_node->left, atom_tree, current_node);
+
+        if (current_node == NULL)
+          return NULL;
       }
 
       if (re_node->start > 0)
@@ -756,6 +791,9 @@ ATOM_TREE_NODE* _yr_atoms_extract_from_re_node(
 
       current_node = _yr_atoms_extract_from_re_node(
           re_node->left, atom_tree, current_node);
+
+      if (current_node == NULL)
+        return NULL;
 
       append_current_leaf_to_node(current_node);
       return current_node;
@@ -825,12 +863,10 @@ int yr_atoms_extract_triplets(
     if (left_child->left->type == RE_NODE_LITERAL &&
         (left_child->right->type == RE_NODE_ANY))
     {
-      int i;
-      YR_ATOM_LIST_ITEM* atom;
-
-      for (i = 0; i < 256; i++)
+      for (int i = 0; i < 256; i++)
       {
-        atom = (YR_ATOM_LIST_ITEM*) yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
+        YR_ATOM_LIST_ITEM* atom = (YR_ATOM_LIST_ITEM*)
+            yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
         if (atom == NULL)
           return ERROR_INSUFICIENT_MEMORY;
@@ -854,17 +890,15 @@ int yr_atoms_extract_triplets(
     if (left_child->left->type == RE_NODE_LITERAL &&
         (left_child->right->type == RE_NODE_MASKED_LITERAL))
     {
-      int i;
-      int shift;
-
-      YR_ATOM_LIST_ITEM* atom;
-
-      for (i = 0; i < 16; i++)
+      for (int i = 0; i < 16; i++)
       {
-        atom = (YR_ATOM_LIST_ITEM*) yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
+        YR_ATOM_LIST_ITEM* atom = (YR_ATOM_LIST_ITEM*)
+            yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
         if (atom == NULL)
           return ERROR_INSUFICIENT_MEMORY;
+
+        int shift;
 
         if (left_child->right->mask == 0xF0)
           shift = 0;
@@ -891,12 +925,10 @@ int yr_atoms_extract_triplets(
         left_grand_child->right->type == RE_NODE_LITERAL &&
         (left_child->right->type == RE_NODE_ANY))
     {
-      int i;
-      YR_ATOM_LIST_ITEM* atom;
-
-      for (i = 0; i < 256; i++)
+      for (int i = 0; i < 256; i++)
       {
-        atom = (YR_ATOM_LIST_ITEM*) yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
+        YR_ATOM_LIST_ITEM* atom = (YR_ATOM_LIST_ITEM*)
+            yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
         if (atom == NULL)
           return ERROR_INSUFICIENT_MEMORY;
@@ -913,6 +945,7 @@ int yr_atoms_extract_triplets(
 
         *atoms = atom;
       }
+
       return ERROR_SUCCESS;
     }
 
@@ -920,17 +953,15 @@ int yr_atoms_extract_triplets(
         left_grand_child->right->type == RE_NODE_LITERAL &&
         (left_child->right->type == RE_NODE_MASKED_LITERAL))
     {
-      int i;
-      int shift;
-
-      YR_ATOM_LIST_ITEM* atom;
-
-      for (i = 0; i < 16; i++)
+      for (int i = 0; i < 16; i++)
       {
-        atom = (YR_ATOM_LIST_ITEM*) yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
+        YR_ATOM_LIST_ITEM* atom = (YR_ATOM_LIST_ITEM*)
+            yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
         if (atom == NULL)
           return ERROR_INSUFICIENT_MEMORY;
+
+        int shift;
 
         if (left_child->right->mask == 0xF0)
           shift = 0;
@@ -975,11 +1006,21 @@ int yr_atoms_extract_from_re(
 
   int min_atom_quality = 0;
 
-  atom_tree->root_node = _yr_atoms_tree_node_create(ATOM_TREE_OR);;
+  if (atom_tree == NULL)
+    return ERROR_INSUFICIENT_MEMORY;
+
+  atom_tree->root_node = _yr_atoms_tree_node_create(ATOM_TREE_OR);
+
+  if (atom_tree->root_node == NULL)
+    return ERROR_INSUFICIENT_MEMORY;
+
   atom_tree->current_leaf = NULL;
 
   atom_tree->root_node = _yr_atoms_extract_from_re_node(
       re->root_node, atom_tree, atom_tree->root_node);
+
+  if (atom_tree->root_node == NULL)
+    return ERROR_INSUFICIENT_MEMORY;
 
   if (atom_tree->current_leaf != NULL)
     _yr_atoms_tree_node_append(atom_tree->root_node, atom_tree->current_leaf);
@@ -995,8 +1036,16 @@ int yr_atoms_extract_from_re(
     yr_free(temp);
   }
 
-  // Choose the atoms that will be used.
-  min_atom_quality = _yr_atoms_choose(atom_tree->root_node, atoms);
+  // Initialize atom list
+  *atoms = NULL;
+
+  if (atom_tree->root_node != NULL)
+  {
+    // Choose the atoms that will be used.
+    FAIL_ON_ERROR_WITH_CLEANUP(
+        _yr_atoms_choose(atom_tree->root_node, atoms, &min_atom_quality),
+        _yr_atoms_tree_destroy(atom_tree));
+  }
 
   _yr_atoms_tree_destroy(atom_tree);
 
@@ -1005,7 +1054,12 @@ int yr_atoms_extract_from_re(
     // Choosen atoms contain low quality ones, let's try infering some higher
     // quality atoms.
 
-    yr_atoms_extract_triplets(re->root_node, &triplet_atoms);
+    FAIL_ON_ERROR_WITH_CLEANUP(
+        yr_atoms_extract_triplets(re->root_node, &triplet_atoms),
+        {
+          yr_atoms_list_destroy(*atoms);
+          *atoms = NULL;
+        });
 
     if (min_atom_quality < yr_atoms_min_quality(triplet_atoms))
     {
@@ -1020,8 +1074,12 @@ int yr_atoms_extract_from_re(
 
   if (flags & STRING_GFLAGS_WIDE)
   {
-    FAIL_ON_ERROR(_yr_atoms_wide(
-        *atoms, &wide_atoms));
+    FAIL_ON_ERROR_WITH_CLEANUP(
+        _yr_atoms_wide(*atoms, &wide_atoms),
+        {
+          yr_atoms_list_destroy(*atoms);
+          *atoms = NULL;
+        });
 
     if (flags & STRING_GFLAGS_ASCII)
     {
@@ -1036,8 +1094,12 @@ int yr_atoms_extract_from_re(
 
   if (flags & STRING_GFLAGS_NO_CASE)
   {
-    FAIL_ON_ERROR(_yr_atoms_case_insentive(
-        *atoms, &case_insentive_atoms));
+    FAIL_ON_ERROR_WITH_CLEANUP(
+        _yr_atoms_case_insentive(*atoms, &case_insentive_atoms),
+        {
+          yr_atoms_list_destroy(*atoms);
+          *atoms = NULL;
+        });
 
     *atoms = _yr_atoms_list_concat(*atoms, case_insentive_atoms);
   }
@@ -1063,7 +1125,6 @@ int yr_atoms_extract_from_string(
   YR_ATOM_LIST_ITEM* wide_atoms;
 
   int max_quality;
-  int quality;
   int i, j, length;
 
   item = (YR_ATOM_LIST_ITEM*) yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
@@ -1087,7 +1148,7 @@ int yr_atoms_extract_from_string(
 
   for (i = MAX_ATOM_LENGTH; i < string_length; i++)
   {
-    quality = _yr_atoms_quality(
+    int quality = _yr_atoms_quality(
         string + i - MAX_ATOM_LENGTH + 1, MAX_ATOM_LENGTH);
 
     if (quality > max_quality)
@@ -1100,31 +1161,40 @@ int yr_atoms_extract_from_string(
     }
   }
 
+  *atoms = item;
+
   if (flags & STRING_GFLAGS_WIDE)
   {
-    FAIL_ON_ERROR(_yr_atoms_wide(
-        item, &wide_atoms));
+    FAIL_ON_ERROR_WITH_CLEANUP(
+        _yr_atoms_wide(*atoms, &wide_atoms),
+        {
+          yr_atoms_list_destroy(*atoms);
+          *atoms = NULL;
+        });
 
     if (flags & STRING_GFLAGS_ASCII)
     {
-      item = _yr_atoms_list_concat(item, wide_atoms);
+      *atoms = _yr_atoms_list_concat(*atoms, wide_atoms);
     }
     else
     {
-      yr_atoms_list_destroy(item);
-      item = wide_atoms;
+      yr_atoms_list_destroy(*atoms);
+      *atoms = wide_atoms;
     }
   }
 
   if (flags & STRING_GFLAGS_NO_CASE)
   {
-    FAIL_ON_ERROR(_yr_atoms_case_insentive(
-        item, &case_insentive_atoms));
+    FAIL_ON_ERROR_WITH_CLEANUP(
+        _yr_atoms_case_insentive(*atoms, &case_insentive_atoms),
+        {
+          yr_atoms_list_destroy(*atoms);
+          *atoms = NULL;
+        });
 
-    item = _yr_atoms_list_concat(item, case_insentive_atoms);
+    *atoms = _yr_atoms_list_concat(*atoms, case_insentive_atoms);
   }
 
-  *atoms = item;
   return ERROR_SUCCESS;
 }
 

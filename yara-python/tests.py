@@ -371,7 +371,7 @@ class TestYara(unittest.TestCase):
             'rule test { condition: 1 << 3 == 8 }',
             'rule test { condition: 1 | 3 ^ 3 == 1 | (3 ^ 3) }'
             ])
-            
+
         self.assertFalseRules([
             'rule test { condition: ~0xAA ^ 0x5A & 0xFF == 0x0F }',
             'rule test { condition: 1 | 3 ^ 3 == (1 | 3) ^ 3}'
@@ -694,6 +694,15 @@ class TestYara(unittest.TestCase):
         r = yara.compile(source='rule test { condition: ext_int == 15 }', externals={'ext_int': 15})
         self.assertTrue(r.match(data='dummy'))
 
+        r = yara.compile(source='rule test { condition: ext_int == -15}', externals={'ext_int': -15})
+        self.assertTrue(r.match(data='dummy'))
+
+        r = yara.compile(source='rule test { condition: ext_float == 3.14 }', externals={'ext_float': 3.14})
+        self.assertTrue(r.match(data='dummy'))
+
+        r = yara.compile(source='rule test { condition: ext_float == -0.5 }', externals={'ext_float': -0.5})
+        self.assertTrue(r.match(data='dummy'))
+
         r = yara.compile(source='rule test { condition: ext_bool }', externals={'ext_bool': True})
         self.assertTrue(r.match(data='dummy'))
 
@@ -818,7 +827,7 @@ class TestYara(unittest.TestCase):
             'rule test { condition: uint8be(0) == 0xAA}',
             'rule test { condition: uint16be(0) == 0xAABB}',
             'rule test { condition: uint32be(0) == 0xAABBCCDD}',
-          ], '\xAA\xBB\xCC\xDD')
+          ], b'\xAA\xBB\xCC\xDD')
 
 
 if __name__ == "__main__":
